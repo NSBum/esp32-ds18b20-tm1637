@@ -1,0 +1,58 @@
+menu "esp32-ds18b20-example Configuration"
+
+config TM1637_1_CLK
+	int "TM1637 1 GPIO number"
+	range 0 34
+	default 26
+	help
+		GPIO number for the CLK (clock) of the 1st TM1637
+
+		Note that some GPIO pins have dedicated purposes and cannot be used.
+
+		GPIOs 35-39 are input-only and cannot be used for the TM1637.
+
+config TM1637_1_DIO
+	int "TM1637 1 DIO number"
+	range 0 34
+	default 26
+	help
+		GPIO number for the DIO (data) line of the 1st TM1637
+
+		Note that some GPIO pins have dedicated purposes and cannot be used.
+
+		GPIOs 35-39 are input-only and cannot be used for the TM1637.
+
+config TM1637_2_CLK
+	int "TM1637 2 GPIO number"
+	range 0 34
+	default 26
+	help
+		GPIO number for the CLK (clock) of the 1st TM1637
+
+		Note that some GPIO pins have dedicated purposes and cannot be used.
+
+		GPIOs 35-39 are input-only and cannot be used for the TM1637.
+
+config TM1637_2_DIO
+	int "TM1637 2 DIO number"
+	range 0 34
+	default 26
+	help
+		GPIO number for the DIO (data) line of the 1st TM1637
+
+		Note that some GPIO pins have dedicated purposes and cannot be used.
+
+		GPIOs 35-39 are input-only and cannot be used for the TM1637.
+
+config ONE_WIRE_GPIO
+    int "OneWire GPIO number"
+	range 0 34
+	default 5
+	help
+		GPIO number (IOxx) to access One Wire Bus.
+
+		Some GPIOs are used for other purposes (flash connections, etc.) and cannot be used.
+
+		GPIOs 35-39 are input-only so cannot be used to drive the One Wire Bus.
+
+endmenu
