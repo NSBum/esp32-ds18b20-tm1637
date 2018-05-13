@@ -36,17 +36,33 @@
 #include "owb_rmt.h"
 #include "ds18b20.h"
 
+#include "tm1637.h"
 
 #define GPIO_DS18B20_0       (CONFIG_ONE_WIRE_GPIO)
+#define GPIO_TM1637_1_CLK    (CONFIG_TM1637_1_CLK)
+#define GPIO_TM1637_1_DIO    (CONFIG_TM1637_1_DIO)
+#define GPIO_TM1637_2_CLK    (CONFIG_TM1637_2_CLK)
+#define GPIO_TM1637_2_DIO    (CONFIG_TM1637_2_DIO)
 #define MAX_DEVICES          (8)
 #define DS18B20_RESOLUTION   (DS18B20_RESOLUTION_12_BIT)
 #define SAMPLE_PERIOD        (1000)   // milliseconds
+
+esp_err_t nvs_init() {
+    esp_err_t ret = nvs_flash_init();
+    if (ret == ESP_ERR_NVS_NO_FREE_PAGES) {
+        ESP_ERROR_CHECK(nvs_flash_erase());
+        ret = nvs_flash_init();
+    }
+    return ret;
+}
 
 void app_main()
 {
     esp_log_level_set("*", ESP_LOG_INFO);
 
-    // Stable readings require a brief period before communication
+    ESP_ERROR_CHECK( nvs_init() );
+
+    // Allow bus to stabilize a bit before communicating
     vTaskDelay(2000.0 / portTICK_PERIOD_MS);
 
     // Create a 1-Wire bus

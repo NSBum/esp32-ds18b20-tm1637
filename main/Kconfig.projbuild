@@ -14,7 +14,7 @@ config TM1637_1_CLK
 config TM1637_1_DIO
 	int "TM1637 1 DIO number"
 	range 0 34
-	default 26
+	default 27
 	help
 		GPIO number for the DIO (data) line of the 1st TM1637
 
@@ -25,7 +25,7 @@ config TM1637_1_DIO
 config TM1637_2_CLK
 	int "TM1637 2 GPIO number"
 	range 0 34
-	default 26
+	default 28
 	help
 		GPIO number for the CLK (clock) of the 1st TM1637
 
@@ -36,7 +36,7 @@ config TM1637_2_CLK
 config TM1637_2_DIO
 	int "TM1637 2 DIO number"
 	range 0 34
-	default 26
+	default 29
 	help
 		GPIO number for the DIO (data) line of the 1st TM1637
 
