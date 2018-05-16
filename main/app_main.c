@@ -1,6 +1,7 @@
 /*
  * MIT License
  *
+ * Copyright (c) 2018 Alan Duncan
  * Copyright (c) 2017 David Antliff
  *
  * Permission is hereby granted, free of charge, to any person obtaining a copy
@@ -20,17 +21,22 @@
  * LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
  * OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
  * SOFTWARE.
+ *
+ * Portions of this software are derived from an example work by David Antliff,
+ * the developer of the esp32-owb and esp32-ds18b20 libraries.
  */
 
 #include <inttypes.h>
 
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
+#include "freertos/portmacro.h"
+#include "freertos/event_groups.h"
+
 #include "esp_system.h"
 #include "esp_log.h"
 
-// Uncomment to enable static (stack-based) allocation of instances and avoid malloc/free.
-//#define USE_STATIC 1
+#include "nvs_flash.h"
 
 #include "owb.h"
 #include "owb_rmt.h"
@@ -38,6 +44,14 @@
 
 #include "tm1637.h"
 
+static const char MAINTAG = "DS18B20-TM1637";
+
+/*
+ *  CONFIGURATION VARIABLES
+ *
+ *  To configure variable that are prefixed 'CONFIG'
+ *  use the `make menuconfig` utility.
+ */
 #define GPIO_DS18B20_0       (CONFIG_ONE_WIRE_GPIO)
 #define GPIO_TM1637_1_CLK    (CONFIG_TM1637_1_CLK)
 #define GPIO_TM1637_1_DIO    (CONFIG_TM1637_1_DIO)
@@ -45,7 +59,43 @@
 #define GPIO_TM1637_2_DIO    (CONFIG_TM1637_2_DIO)
 #define MAX_DEVICES          (8)
 #define DS18B20_RESOLUTION   (DS18B20_RESOLUTION_12_BIT)
-#define SAMPLE_PERIOD        (1000)   // milliseconds
+#define SAMPLE_PERIOD        (1000)   // milliseconds betwen temperature measurements
+
+//  TM1637-based 4 digit, seven-segment displays
+tm1637_led_t *led[2];
+
+//  Array of pointers to DS18B20 devices
+DS18B20_Info * devices[MAX_DEVICES] = {0};
+//  Array of OneWire bus ROM codes
+OneWireBus_ROMCode device_rom_codes[MAX_DEVICES] = {0};
+//  The OneWire bus object
+OneWireBus * owb;
+
+// Known ROM code (LSB first), optionally we can use these in lieu of the search
+/*
+
+OneWireBus_ROMCode known_device0 = {
+    .fields.family = { 0x28 },
+    .fields.serial_number = { 0xFF, 0x11, 0x35, 0x02, 0x17, 0x04 },
+    .fields.crc = { 0x9C },
+};
+OneWireBus_ROMCode known_device1 = {
+    .fields.family = { 0x28 },
+    .fields.serial_number = { 0xFF, 0x37, 0x1D, 0x03, 0x17, 0x05 },
+    .fields.crc = { 0x61 },
+};
+
+*/
+
+int num_devices = 0;
+float readings[MAX_DEVICES] = { 0 };
+
+//  opaque collection of flags
+static EventGroupHandle_t owb_event_group;
+// flag bits in the event group
+const int SEARCH_COMPLETE_BIT = BIT0;
+const int DS18B20_SETUP_COMPLETE_BIT = BIT1;
+const int DS18B20_TEMP_READY = BIT2;
 
 esp_err_t nvs_init() {
     esp_err_t ret = nvs_flash_init();
@@ -56,38 +106,21 @@ esp_err_t nvs_init() {
     return ret;
 }
 
-void app_main()
-{
-    esp_log_level_set("*", ESP_LOG_INFO);
+void owb_search_task(void *pvParameters ) {
+    xEventGroupClearBits(owb_event_group, SEARCH_COMPLETE_BIT);
 
-    ESP_ERROR_CHECK( nvs_init() );
-
-    // Allow bus to stabilize a bit before communicating
-    vTaskDelay(2000.0 / portTICK_PERIOD_MS);
-
-    // Create a 1-Wire bus
-//#ifdef USE_STATIC
-//    OneWireBus owb_static;        // static allocation
-//    OneWireBus * owb = &owb_static;
-//#else
-//    OneWireBus * owb = owb_malloc();     // heap allocation
-//#endif
-    OneWireBus * owb;
     owb_rmt_driver_info rmt_driver_info;
     owb = owb_rmt_initialize(&rmt_driver_info, GPIO_DS18B20_0, RMT_CHANNEL_1, RMT_CHANNEL_0);
 
-//    owb_init(owb, GPIO_DS18B20_0);
     owb_use_crc(owb, true);              // enable CRC check for ROM code
 
     // Find all connected devices
-    printf("Find devices:\n");
-    OneWireBus_ROMCode device_rom_codes[MAX_DEVICES] = {0};
-    int num_devices = 0;
+    ESP_LOGV(MAINTAG,"Finding devices");
+    
     OneWireBus_SearchState search_state = {0};
     bool found = false;
     owb_search_first(owb, &search_state, &found);
-    while (found)
-    {
+    while( found ) {
         char rom_code_s[17];
         owb_string_from_rom_code(search_state.rom_code, rom_code_s, sizeof(rom_code_s));
         printf("  %d : %s\n", num_devices, rom_code_s);
@@ -95,80 +128,37 @@ void app_main()
         ++num_devices;
         owb_search_next(owb, &search_state, &found);
     }
+    ESP_LOGI(MAINTAG,"Found %d devices", num_devices)
 
-    printf("Found %d devices\n", num_devices);
+    xEventGroupSetBits(owb_event_group, SEARCH_COMPLETE_BIT);
+    vTaskDelete(NULL);
+}
 
-    //uint64_t rom_code = 0x0001162e87ccee28;  // pink
-    //uint64_t rom_code = 0xf402162c6149ee28;  // green
-    //uint64_t rom_code = 0x1502162ca5b2ee28;  // orange
-    //uint64_t rom_code = owb_read_rom(owb);
-
-    // Known ROM code (LSB first):
-    OneWireBus_ROMCode known_device = {
-        .fields.family = { 0x28 },
-        .fields.serial_number = { 0xee, 0xcc, 0x87, 0x2e, 0x16, 0x01 },
-        .fields.crc = { 0x00 },
-    };
-    char rom_code_s[17];
-    owb_string_from_rom_code(known_device, rom_code_s, sizeof(rom_code_s));
-    bool is_present = false;
-    owb_verify_rom(owb, known_device, &is_present);
-    printf("Device %s is %s\n", rom_code_s, is_present ? "present" : "not present");
-
-    // Create a DS18B20 device on the 1-Wire bus
-#ifdef USE_STATIC
-    DS18B20_Info devices_static[MAX_DEVICES] = {0};
-    DS18B20_Info * devices[MAX_DEVICES] = {0};
-    for (int i = 0; i < MAX_DEVICES; ++i)
-    {
-        devices[i] = &(devices_static[i]);
+void ds18b20_init_devices(void *pvParameters) {
+    xEventGroupClearBits(owb_event_group, DS18B20_SETUP_COMPLETE_BIT);
+    xEventGroupWaitBits(owb_event_group, SEARCH_COMPLETE_BIT, 1, 0, portMAX_DELAY);
+    for( int i = 0; i < num_devices; ++i ) {
+        devices[i] = ds18b20_malloc();;
+        ds18b20_init(devices[i], owb, device_rom_codes[i]); // associate with bus and device
+        ds18b20_use_crc(devices[i], true);           // enable CRC check for temperature readings
+        ds18b20_set_resolution(devices[i], DS18B20_RESOLUTION);
     }
-#else
-    DS18B20_Info * devices[MAX_DEVICES] = {0};
-#endif
+    xEventGroupSetBits(owb_event_group, DS18B20_SETUP_COMPLETE_BIT);
+    vTaskDelete(NULL);
+}
 
-    for (int i = 0; i < num_devices; ++i)
-    {
-#ifdef USE_STATIC
-        DS18B20_Info * ds18b20_info = devices[i];
-#else
-        DS18B20_Info * ds18b20_info = ds18b20_malloc();  // heap allocation
-        devices[i] = ds18b20_info;
-#endif
-        if (num_devices == 1)
-        {
-            printf("Single device optimisations enabled\n");
-            ds18b20_init_solo(ds18b20_info, owb);          // only one device on bus
-        }
-        else
-        {
-            ds18b20_init(ds18b20_info, owb, device_rom_codes[i]); // associate with bus and device
-        }
-        ds18b20_use_crc(ds18b20_info, true);           // enable CRC check for temperature readings
-        ds18b20_set_resolution(ds18b20_info, DS18B20_RESOLUTION);
-    }
-
-//    // Read temperatures from all sensors sequentially
-//    while (1)
-//    {
-//        printf("\nTemperature readings (degrees C):\n");
-//        for (int i = 0; i < num_devices; ++i)
-//        {
-//            float temp = ds18b20_get_temp(devices[i]);
-//            printf("  %d: %.3f\n", i, temp);
-//        }
-//        vTaskDelay(1000 / portTICK_PERIOD_MS);
-//    }
+void owb_get_temps(void *pvParameters) {
+    //  wait for bus scan to complete
+    xEventGroupWaitBits(owb_event_group, DS18B20_SETUP_COMPLETE_BIT, 1, 0, portMAX_DELAY);
 
     // Read temperatures more efficiently by starting conversions on all devices at the same time
     int errors_count[MAX_DEVICES] = {0};
     int sample_count = 0;
-    if (num_devices > 0)
-    {
+    if (num_devices > 0) {
         TickType_t last_wake_time = xTaskGetTickCount();
 
-        while (1)
-        {
+        while (1) {
+            xEventGroupClearBits(owb_event_group, DS18B20_TEMP_READY);
             last_wake_time = xTaskGetTickCount();
 
             ds18b20_convert_all(owb);
@@ -179,38 +169,55 @@ void app_main()
 
             // Read the results immediately after conversion otherwise it may fail
             // (using printf before reading may take too long)
-            float readings[MAX_DEVICES] = { 0 };
             DS18B20_ERROR errors[MAX_DEVICES] = { 0 };
 
-            for (int i = 0; i < num_devices; ++i)
-            {
+            for (int i = 0; i < num_devices; ++i) {
                 errors[i] = ds18b20_read_temp(devices[i], &readings[i]);
             }
 
             // Print results in a separate loop, after all have been read
             printf("\nTemperature readings (degrees C): sample %d\n", ++sample_count);
-            for (int i = 0; i < num_devices; ++i)
-            {
-                if (errors[i] != DS18B20_OK)
-                {
+            for (int i = 0; i < num_devices; ++i) {
+                if (errors[i] != DS18B20_OK) {
                     ++errors_count[i];
                 }
-
-                printf("  %d: %.1f    %d errors\n", i, readings[i], errors_count[i]);
+                char rom_code_s[17];
+                owb_string_from_rom_code(device_rom_codes[i], rom_code_s, sizeof(rom_code_s));
+                printf("  %d - %s: %.2f    %d errors\n", i, rom_code_s, readings[i], errors_count[i]);
             }
-
+            xEventGroupSetBits(owb_event_group, DS18B20_TEMP_READY);
+            tm1637_set_float(led[0],readings[0]);
+            tm1637_set_float(led[1],readings[1]);
             vTaskDelayUntil(&last_wake_time, SAMPLE_PERIOD / portTICK_PERIOD_MS);
         }
     }
+}
 
-#ifndef USE_STATIC
+void app_main() {
+    esp_log_level_set("*", ESP_LOG_INFO);
+
+    //  init NVS
+    ESP_ERROR_CHECK( nvs_init() );
+
+    owb_event_group = xEventGroupCreate();
+
+    //  initialize our displays
+    led[0] = tm1637_init(GPIO_TM1637_1_CLK,GPIO_TM1637_1_DIO);
+    led[1] = tm1637_init(GPIO_TM1637_2_CLK,GPIO_TM1637_2_DIO);
+
+    // Allow bus to stabilize a bit before communicating
+    vTaskDelay(2000.0 / portTICK_PERIOD_MS);
+
+    xTaskCreate(&owb_search_task,"owbsearch",4096,NULL,5,NULL);
+    xTaskCreate(&ds18b20_init_devices,"initdevives",4096,NULL,5,NULL);
+    xTaskCreate(&owb_get_temps,"gettemps",4096,NULL,5,NULL);
+
+    while( 1 ) { }
+      
     // clean up dynamically allocated data
-    for (int i = 0; i < num_devices; ++i)
-    {
+    for (int i = 0; i < num_devices; ++i) {
         ds18b20_free(&devices[i]);
     }
-//    owb_free(&owb);
-#endif
 
     printf("Restarting now.\n");
     fflush(stdout);

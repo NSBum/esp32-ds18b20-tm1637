@@ -1,7 +1,7 @@
 menu "esp32-ds18b20-example Configuration"
 
 config TM1637_1_CLK
-	int "TM1637 1 GPIO number"
+	int "TM1637 1 CLK GPIO number"
 	range 0 34
 	default 26
 	help
@@ -12,7 +12,7 @@ config TM1637_1_CLK
 		GPIOs 35-39 are input-only and cannot be used for the TM1637.
 
 config TM1637_1_DIO
-	int "TM1637 1 DIO number"
+	int "TM1637 1 DIO GPIO number"
 	range 0 34
 	default 27
 	help
@@ -23,7 +23,7 @@ config TM1637_1_DIO
 		GPIOs 35-39 are input-only and cannot be used for the TM1637.
 
 config TM1637_2_CLK
-	int "TM1637 2 GPIO number"
+	int "TM1637 2 CLK GPIO number"
 	range 0 34
 	default 28
 	help
@@ -34,7 +34,7 @@ config TM1637_2_CLK
 		GPIOs 35-39 are input-only and cannot be used for the TM1637.
 
 config TM1637_2_DIO
-	int "TM1637 2 DIO number"
+	int "TM1637 2 DIO GPIO number"
 	range 0 34
 	default 29
 	help
